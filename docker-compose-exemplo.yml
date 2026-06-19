@@ -1,0 +1,95 @@
+# docker-compose.example.yml
+#
+# Versão sanitizada da stack principal — sem domínios, IPs ou credenciais reais.
+# Substitua os placeholders (ex: ${DOMAIN}) por variáveis de ambiente reais em um
+# arquivo .env local (NÃO versionado).
+
+version: "3.9"
+
+networks:
+  proxy:
+    name: proxy
+    driver: bridge
+
+volumes:
+  traefik_certs:
+  portainer_data:
+  grafana_data:
+
+services:
+
+  traefik:
+    image: traefik:v3.1
+    container_name: traefik
+    restart: unless-stopped
+    networks:
+      - proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.myresolver.acme.storage=/certs/acme.json"
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_certs:/certs
+    labels:
+      - "traefik.enable=true"
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    networks:
+      - proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.${DOMAIN}`)"
+      - "traefik.http.routers.portainer.entrypoints=websecure"
+      - "traefik.http.routers.portainer.tls.certresolver=myresolver"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: grafana
+    restart: unless-stopped
+    networks:
+      - proxy
+    user: "472:472"   # UID/GID esperado pelo Grafana — não usar chown -R global
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.${DOMAIN}`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls.certresolver=myresolver"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    networks:
+      - proxy
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    # Expõe apenas os serviços explicitamente configurados no painel da Cloudflare —
+    # nenhuma porta é aberta no host/roteador.
+
+# Exemplo de arquivo .env (NÃO commitar — adicionar ao .gitignore):
+#
+# DOMAIN=seu-dominio.exemplo
+# ACME_EMAIL=seu-email@exemplo.com
+# GRAFANA_ADMIN_PASSWORD=defina-uma-senha-forte
+# CLOUDFLARE_TUNNEL_TOKEN=token-gerado-no-painel-cloudflare
